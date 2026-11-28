@@ -1,0 +1,29 @@
+name: TMP read README
+
+on:
+  workflow_dispatch:
+
+jobs:
+  print-readme:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+      - name: Print README in fixed-width chunks
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          data = Path('README.md').read_bytes()
+          print('TOTAL_BYTES', len(data))
+          text = data.decode('utf-8', errors='surrogatepass')
+          lines = text.splitlines(keepends=True)
+          print('TOTAL_LINES', len(lines))
+          for i in range(0, len(text), 6000):
+              chunk = text[i:i+6000]
+              print(f'---CHUNK {i} START---')
+              print(chunk, end='')
+              if not chunk.endswith('\n'):
+                  print()
+              print(f'---CHUNK {i} END---')
+          PY
