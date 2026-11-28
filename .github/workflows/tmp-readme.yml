@@ -1,65 +1,103 @@
-name: TMP read README
+name: TMP update README
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  inspect-readme:
+  update-readme:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: dev
-      - name: Regenerate TODO section as dry run
+      - name: Apply scoped README TODO updates
         run: |
           python - <<'PY'
           from pathlib import Path
           import difflib, re
 
-          root = Path('.')
-          todo_re = re.compile(r'^#\s*TODO\b(?P<rest>.*)$')
-          items = []
-          for path in root.rglob('*.py'):
-              parts = set(path.parts)
-              if any(p in {'.git', '__pycache__', '.venv', 'venv'} for p in parts):
+          readme_path = Path('README.md')
+          text = readme_path.read_text(encoding='utf-8')
+          marker = '### 📝 Complete TODO List'
+          start = text.index(marker)
+          list_start = text.index('\n', start) + 1
+          end = text.index('## 🤝 Contributing', list_start)
+          old_section = text[start:end]
+
+          deleted_exact = {
+              '- [ ] **luffy/deepscaler/utils.py:45** - Implement OpenAI API client initialization',
+              '- [ ] **luffy/deepscaler/utils.py:46** - Add proper authentication handling',
+              '- [ ] **luffy/deepscaler/utils.py:47** - Implement exponential backoff retry logic for rate limits',
+              '- [ ] **luffy/deepscaler/utils.py:48** - Add comprehensive error handling for different API errors',
+              '- [ ] **luffy/deepscaler/utils.py:49** - Implement response parsing and validation',
+              '- [ ] **luffy/verl/verl/protocol.py:114** - Implement batch dimension folding for efficient processing',
+              '- [ ] **luffy/verl/verl/protocol.py:115** - Add validation for batch size compatibility',
+              '- [ ] **luffy/verl/verl/protocol.py:116** - Handle edge cases where batch_size is not divisible by new_batch_size',
+              '- [ ] **luffy/verl/verl/protocol.py:131** - Implement batch dimension unfolding functionality',
+              '- [ ] **luffy/verl/verl/protocol.py:132** - Add support for variable batch dimensions',
+              '- [ ] **luffy/verl/verl/protocol.py:134** - Handle non-tensor batch data reshaping properly',
+          }
+          line_map = {
+              ('luffy/deepscaler/utils.py', 50): 45,
+              ('luffy/deepscaler/utils.py', 51): 46,
+              ('luffy/deepscaler/utils.py', 52): 47,
+              ('luffy/deepscaler/utils.py', 88): 107,
+              ('luffy/deepscaler/utils.py', 89): 108,
+              ('luffy/deepscaler/utils.py', 90): 109,
+              ('luffy/deepscaler/utils.py', 91): 110,
+              ('luffy/deepscaler/utils.py', 92): 111,
+              ('luffy/deepscaler/utils.py', 93): 112,
+              ('luffy/deepscaler/utils.py', 94): 113,
+              ('luffy/deepscaler/utils.py', 95): 114,
+              ('luffy/verl/verl/protocol.py', 117): 114,
+              ('luffy/verl/verl/protocol.py', 118): 115,
+              ('luffy/verl/verl/protocol.py', 133): 136,
+              ('luffy/verl/verl/protocol.py', 135): 137,
+              ('luffy/verl/verl/protocol.py', 156): 169,
+              ('luffy/verl/verl/protocol.py', 252): 265,
+              ('luffy/verl/verl/protocol.py', 338): 351,
+          }
+          item_re = re.compile(r'^- \[ \] \*\*(?P<path>[^*]+):(?P<line>\d+)\*\* - (?P<msg>.*)$')
+          new_lines = []
+          removed = 0
+          moved = 0
+          for line in old_section.splitlines():
+              if line in deleted_exact:
+                  removed += 1
                   continue
-              text = path.read_text(encoding='utf-8', errors='replace')
-              for lineno, raw in enumerate(text.splitlines(), 1):
-                  stripped = raw.strip()
-                  m = todo_re.match(stripped)
-                  if not m:
-                      continue
-                  msg = m.group('rest').strip()
-                  if msg.startswith(':'):
-                      msg = msg[1:].strip()
-                  if not msg:
-                      continue
-                  items.append((str(path.as_posix()), lineno, msg))
-          items.sort(key=lambda x: (x[0], x[1]))
-          generated = ['### 📝 Complete TODO List', '']
-          generated += [f'- [ ] **{path}:{line}** - {msg}' for path, line, msg in items]
-          generated.append('')
-          readme = Path('README.md').read_text(encoding='utf-8')
-          start_marker = '### 📝 Complete TODO List'
-          start = readme.index(start_marker)
-          rest_start = readme.index('\n', start) + 1
-          next_heading = readme.index('## 🤝 Contributing', rest_start)
-          old_section = readme[start:next_heading].rstrip('\n') + '\n\n'
-          new_section = '\n'.join(generated)
-          new_readme = readme[:start] + new_section + readme[next_heading:]
-          print('GENERATED_COUNT', len(items))
-          print('OLD_SECTION_COUNT', sum(1 for x in old_section.splitlines() if x.startswith('- [ ]')))
-          print('NEW_SECTION_COUNT', sum(1 for x in new_section.splitlines() if x.startswith('- [ ]')))
+              m = item_re.match(line)
+              if m:
+                  key = (m.group('path'), int(m.group('line')))
+                  if key in line_map:
+                      line = f"- [ ] **{m.group('path')}:{line_map[key]}** - {m.group('msg')}"
+                      moved += 1
+              new_lines.append(line)
+          new_section = '\n'.join(new_lines).rstrip('\n') + '\n\n'
+          new_text = text[:start] + new_section + text[end:]
+          print('REMOVED', removed)
+          print('MOVED', moved)
+          print('OLD_COUNT', sum(x.startswith('- [ ]') for x in old_section.splitlines()))
+          print('NEW_COUNT', sum(x.startswith('- [ ]') for x in new_section.splitlines()))
           diff = list(difflib.unified_diff(
-              old_section.splitlines(),
-              new_section.splitlines(),
-              fromfile='old-section',
-              tofile='new-section',
-              lineterm='',
-              n=2
+              old_section.splitlines(), new_section.splitlines(),
+              fromfile='old-section', tofile='new-section', n=2, lineterm=''
           ))
           print('DIFF_LINES', len(diff))
           for line in diff:
               print(line)
-          print('NEW_README_BYTES', len(new_readme.encode('utf-8')))
+          readme_path.write_text(new_text, encoding='utf-8')
           PY
+      - name: Commit and push README update
+        run: |
+          git config user.name 'CardinalPull'
+          git config user.email 'r75513100@gmail.com'
+          git add README.md
+          if git diff --cached --quiet; then
+            echo 'No README changes to commit'
+          else
+            git commit -m 'docs: update completed TODO entries'
+            git push origin dev
+          fi
