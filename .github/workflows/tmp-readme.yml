@@ -4,22 +4,64 @@ on:
   workflow_dispatch:
 
 jobs:
-  print-readme:
+  inspect-readme:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: dev
-      - name: Print README chunks
+      - name: Regenerate TODO section as dry run
         run: |
           python - <<'PY'
           from pathlib import Path
-          data = Path('README.md').read_bytes()
-          print('TOTAL_BYTES', len(data))
-          text = data.decode('utf-8', errors='surrogatepass')
-          print('TOTAL_LINES', len(text.splitlines()))
-          for i in range(0, len(text), 6000):
-              print(f'---CHUNK {i} START---')
-              print(text[i:i+6000], end='')
-              print(f'---CHUNK {i} END---')
+          import difflib, re
+
+          root = Path('.')
+          todo_re = re.compile(r'^#\s*TODO\b(?P<rest>.*)$')
+          items = []
+          for path in root.rglob('*.py'):
+              # Skip temporary virtual environments if any are present in checkout.
+              parts = set(path.parts)
+              if any(p in {'.git', '__pycache__', '.venv', 'venv'} for p in parts):
+                  continue
+              text = path.read_text(encoding='utf-8', errors='replace')
+              for lineno, raw in enumerate(text.splitlines(), 1):
+                  stripped = raw.strip()
+                  m = todo_re.match(stripped)
+                  if not m:
+                      continue
+                  msg = m.group('rest').strip()
+                  if msg.startswith(':'):
+                      msg = msg[1:].strip()
+                  if not msg:
+                      continue
+                  items.append((str(path.as_posix()), lineno, msg))
+          items.sort(key=lambda x: (x[0], x[1]))
+          generated = ['### 📝 Complete TODO List', '']
+          generated += [f'- [ ] **{path}:{line}** - {msg}' for path, line, msg in items]
+          generated.append('')
+          readme = Path('README.md').read_text(encoding='utf-8')
+          start_marker = '### 📝 Complete TODO List'
+          start = readme.index(start_marker)
+          rest_start = readme.index('\n', start) + 1
+          next_heading = readme.index('## 🤝 Contributing', rest_start)
+          old_section = readme[start:next_heading].rstrip('\n') + '\n\n'
+          new_section = '\n'.join(generated)
+          new_readme = readme[:start] + new_section + readme[next_heading:]
+          print('GENERATED_COUNT', len(items))
+          print('OLD_SECTION_COUNT', sum(1 for x in old_section.splitlines() if x.startswith('- [ ]')))
+          print('NEW_SECTION_COUNT', sum(1 for x in new_section.splitlines() if x.startswith('- [ ]')))
+          diff = list(difflib.unified_diff(
+              old_section.splitlines(),
+              new_section.splitlines(),
+              fromfile='old-section',
+              tofile='new-section',
+              lineterm='',
+              n=2
+          ))
+          print('DIFF_LINES', len(diff))
+          for line in diff:
+              print(line)
+          Path('/tmp/README.updated.md').write_text(new_readme, encoding='utf-8')
+          print('NEW_README_BYTES', len(new_readme.encode('utf-8')))
           PY
